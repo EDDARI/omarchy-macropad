@@ -55,7 +55,7 @@ Item {
   property string fontFamily: Style.font.menuFamily
   property int contentMargin: Style.spacing.panelPadding
   property int rowHeight: Math.max(Style.space(40), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int cardWidth: Math.min(Style.space(380), panel.width - Style.gapsOut * 2)
+  property int cardWidth: Math.min(Style.space(480), panel.width - Style.gapsOut * 2)
   property int listCardHeight: Math.min(rowHeight * slots.length + contentMargin * 2, panel.height - Style.gapsOut * 2)
   property int messageCardHeight: Math.min(Style.space(160), panel.height - Style.gapsOut * 2)
   property int cardHeight: pickerState === "list" ? listCardHeight : messageCardHeight

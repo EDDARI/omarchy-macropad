@@ -37,7 +37,9 @@ for name in "${ORDER[@]}"; do
   LABEL_TO_NAME["$label"]="$name"
 done
 
-selection=$(omarchy-menu-select "Remap which macropad control?" "${labels[@]}") || exit 0
+MENU_WIDTH=480
+
+selection=$(omarchy-menu-select "Remap which macropad control?" "${labels[@]}" -- --width "$MENU_WIDTH") || exit 0
 [[ -z "$selection" ]] && exit 0
 
 name="${LABEL_TO_NAME[$selection]:-}"
@@ -49,7 +51,7 @@ status=$(jq -r '.status' <<<"$capture_json")
 [[ "$status" == "ok" ]] || exit 0
 token=$(jq -r '.token' <<<"$capture_json")
 
-confirm=$(omarchy-menu-select "Assign $name → $token?" "Yes" "No") || exit 0
+confirm=$(omarchy-menu-select "Assign $name → $token?" "Yes" "No" -- --width "$MENU_WIDTH") || exit 0
 [[ "$confirm" == "Yes" ]] || exit 0
 
 exec python3 "$APPLY" apply "$slot" "$token"
