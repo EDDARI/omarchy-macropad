@@ -31,7 +31,7 @@ fi
 echo "==> Installing scripts to $BIN_DIR"
 mkdir -p "$BIN_DIR"
 install -m 755 "$REPO_DIR/bin/omarchy-macropad-remap" "$BIN_DIR/omarchy-macropad-remap"
-install -m 755 "$REPO_DIR/bin/omarchy-macropad-apply.py" "$BIN_DIR/omarchy-macropad-apply.py"
+install -m 755 "$REPO_DIR/omarchy-macropad-apply.py" "$BIN_DIR/omarchy-macropad-apply.py"
 
 echo "==> Setting up default mapping"
 mkdir -p "$CONFIG_DIR"

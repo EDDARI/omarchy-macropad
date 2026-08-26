@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "eddari.macropad",
+  "name": "Macropad Remap",
+  "version": "1.0.0",
+  "author": "EDDARI",
+  "license": "MIT",
+  "description": "Pick a control on a 3-key ch57x/CH552G RGB macropad, then press the shortcut to remap it",
+  "kinds": ["menu"],
+  "entryPoints": { "menu": "Macropad.qml" }
+}
