@@ -1,0 +1,13 @@
+columns: 3
+knobs: 1
+layers:
+- buttons:
+  - - '1'
+    - '2'
+    - '3'
+  knobs:
+  - ccw: volumedown
+    cw: volumeup
+    press: mute
+orientation: normal
+rows: 1

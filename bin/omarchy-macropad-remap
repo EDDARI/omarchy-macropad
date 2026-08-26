@@ -1,0 +1,28 @@
+#!/bin/bash
+# Omarchy trigger: pick a macropad key/knob action from a menu, then press
+# the real-keyboard shortcut you want assigned to it.
+set -euo pipefail
+
+if ! command -v ch57x-keyboard-tool >/dev/null 2>&1; then
+  notify-send -u critical "Macropad remap" "ch57x-keyboard-tool not found"
+  exit 1
+fi
+
+declare -A SLOTS=(
+  ["Key 1"]="button1"
+  ["Key 2"]="button2"
+  ["Key 3"]="button3"
+  ["Knob ⟲ turn left (CCW)"]="knob_ccw"
+  ["Knob press (click)"]="knob_press"
+  ["Knob ⟳ turn right (CW)"]="knob_cw"
+)
+
+selection=$(omarchy-menu-select "Remap which macropad control?" \
+  "Key 1" "Key 2" "Key 3" \
+  "Knob ⟲ turn left (CCW)" "Knob press (click)" "Knob ⟳ turn right (CW)") || exit 0
+
+[[ -z "$selection" ]] && exit 0
+
+slot="${SLOTS[$selection]}"
+
+exec python3 "$HOME/.local/bin/omarchy-macropad-apply.py" "$slot"
