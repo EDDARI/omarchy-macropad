@@ -6,6 +6,12 @@
   "author": "EDDARI",
   "license": "MIT",
   "description": "Pick a control on a 3-key ch57x/CH552G RGB macropad, then press the shortcut to remap it",
-  "kinds": ["menu"],
-  "entryPoints": { "menu": "Macropad.qml" }
+  "kinds": ["menu", "bar-widget"],
+  "entryPoints": { "menu": "Macropad.qml", "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "Macropad Remap",
+    "description": "Opens the macropad remap menu",
+    "category": "Hardware",
+    "allowMultiple": false
+  }
 }

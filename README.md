@@ -1,9 +1,14 @@
 # omarchy-macropad
 
+![Validate](https://github.com/EDDARI/omarchy-macropad/actions/workflows/validate.yml/badge.svg)
+
+![Preview](preview.png)
+
 Remap a cheap 3-key RGB macropad (ch57x/CH552G family, e.g. USB `1189:8890` —
 sold under many AliExpress brand names) without touching a config file or
-Windows software: pick a key or the knob from a menu, then press the real
-shortcut you want assigned to it. Done.
+Windows software: pick a key or the knob from a menu, see what it's
+currently set to, press the real shortcut you want assigned, and confirm.
+Done.
 
 Two ways to install it — pick one.
 
@@ -50,7 +55,9 @@ hooks, or sudo"*). So two things are still on you:
    ```
 
 Update with `omarchy plugin update eddari.macropad`, remove with
-`omarchy plugin remove eddari.macropad`.
+`omarchy plugin remove eddari.macropad`. Also adds a bar icon (⌨) you can
+click instead of pressing `SUPER + M` — enable it with `omarchy bar move
+eddari.macropad --section right` (or any section), or from **Bar Settings**.
 
 Don't run both options — they'd fight over the same `SUPER + M` binding.
 
@@ -59,18 +66,41 @@ Don't run both options — they'd fight over the same `SUPER + M` binding.
 - **Option A's trigger** (`bin/omarchy-macropad-remap`) shows an
   `omarchy-menu-select` popup outside the shell process.
 - **Option B's picker** (`Macropad.qml`) is a native Quickshell menu running
-  inside `omarchy-shell` itself.
-- Either way, picking a control spawns `omarchy-macropad-apply.py`, which
+  inside `omarchy-shell` itself, with an optional bar-icon launcher
+  (`BarWidget.qml`).
+- Either lists the six controls with what they're **currently** mapped to
+  (e.g. `Key 1 → win-k`), so you can see what you're about to change.
+- Picking a control spawns `omarchy-macropad-apply.py capture <slot>`, which
   listens on your real keyboard(s) via `python-evdev` for the next
-  key/combo you press, converts it to
+  key/combo you press and converts it to
   [`ch57x-keyboard-tool`](https://github.com/kriomant/ch57x-keyboard-tool)'s
-  key-name syntax, writes it into `~/.config/ch57x-keyboard/mapping.yaml`,
-  then runs `validate` + `upload` against the device. Notifies success or
-  failure via `notify-send`. Press `Esc` alone during capture to cancel.
+  key-name syntax. Press `Esc` alone during capture to cancel — capture
+  reads raw input devices directly, so this works regardless of what has
+  keyboard focus.
+- **Nothing is written yet.** You're shown `Key 1 → win-c` and asked to
+  confirm (`Enter`) or back out (`Esc`). Only on confirm does
+  `omarchy-macropad-apply.py apply <slot> <token>` write
+  `~/.config/ch57x-keyboard/mapping.yaml` and run `validate` + `upload`
+  against the device, notifying success or failure via `notify-send`. A
+  capture with no explicit confirmation step never touches your mapping.
 
 The device only supports one layer (no layer-switch button), so this covers
 the 3 keys and the knob's turn-left/press/turn-right actions — six
 remappable controls total.
+
+### A different ch57x-family board
+
+If your board enumerates under a different USB vendor/product id than the
+common `1189:8890`, override it — no source edits needed:
+
+```sh
+export MACROPAD_VENDOR_ID=0x1189   # decimal or 0x-hex, passed to evdev filtering
+export MACROPAD_PRODUCT_ID=0x8890  # optional, forwarded to ch57x-keyboard-tool
+```
+
+Set these in your shell profile (for Option A) or in `omarchy-shell`'s
+environment (for Option B, e.g. via Hyprland's `env =` directives) before
+the tool runs.
 
 ## Editing macros directly
 
@@ -83,11 +113,19 @@ ch57x-keyboard-tool upload ~/.config/ch57x-keyboard/mapping.yaml
 
 ## Compatibility
 
-Written for a specific 3-key + 1-knob, no-display board (USB `1189:8890`),
-but should work for any device `ch57x-keyboard-tool` supports — adjust
-`rows`/`columns`/`knobs` in `mapping.yaml` and the `slots` list in
-`Macropad.qml` / `SLOTS` map in `bin/omarchy-macropad-remap` to match your
-layout.
+Written for a specific 3-key + 1-knob, no-display board (USB `1189:8890` by
+default, override-able — see above), but should work for any device
+`ch57x-keyboard-tool` supports — adjust `rows`/`columns`/`knobs` in
+`mapping.yaml` and the `slots` list in `Macropad.qml` / `SLOTS` map in
+`bin/omarchy-macropad-remap` to match your layout.
+
+## Development
+
+`scripts/validate-manifest.sh .` reimplements Omarchy's own
+`omarchy plugin validate` checks so CI can run them without Omarchy
+installed; prefer the real `omarchy plugin validate .` when you have it.
+CI (`.github/workflows/validate.yml`) also compiles the Python script and
+shellchecks the shell scripts on every push and PR.
 
 ## License
 

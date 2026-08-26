@@ -1,7 +1,10 @@
 #!/bin/bash
-# Omarchy trigger: pick a macropad key/knob action from a menu, then press
-# the real-keyboard shortcut you want assigned to it.
+# Omarchy trigger: pick a macropad key/knob action from a menu, press the
+# real-keyboard shortcut you want assigned to it, then confirm before it's
+# written to the device.
 set -euo pipefail
+
+APPLY="$HOME/.local/bin/omarchy-macropad-apply.py"
 
 if ! command -v ch57x-keyboard-tool >/dev/null 2>&1; then
   notify-send -u critical "Macropad remap" "ch57x-keyboard-tool not found"
@@ -16,13 +19,37 @@ declare -A SLOTS=(
   ["Knob press (click)"]="knob_press"
   ["Knob ⟳ turn right (CW)"]="knob_cw"
 )
+ORDER=("Key 1" "Key 2" "Key 3" "Knob ⟲ turn left (CCW)" "Knob press (click)" "Knob ⟳ turn right (CW)")
 
-selection=$(omarchy-menu-select "Remap which macropad control?" \
-  "Key 1" "Key 2" "Key 3" \
-  "Knob ⟲ turn left (CCW)" "Knob press (click)" "Knob ⟳ turn right (CW)") || exit 0
+current_json=$(python3 "$APPLY" current 2>/dev/null || echo '{}')
 
+labels=()
+declare -A LABEL_TO_NAME=()
+for name in "${ORDER[@]}"; do
+  slot="${SLOTS[$name]}"
+  value=$(jq -r --arg k "$slot" '.[$k] // ""' <<<"$current_json")
+  if [[ -n "$value" ]]; then
+    label="$name  →  $value"
+  else
+    label="$name"
+  fi
+  labels+=("$label")
+  LABEL_TO_NAME["$label"]="$name"
+done
+
+selection=$(omarchy-menu-select "Remap which macropad control?" "${labels[@]}") || exit 0
 [[ -z "$selection" ]] && exit 0
 
-slot="${SLOTS[$selection]}"
+name="${LABEL_TO_NAME[$selection]:-}"
+[[ -n "$name" ]] || exit 0
+slot="${SLOTS[$name]}"
 
-exec python3 "$HOME/.local/bin/omarchy-macropad-apply.py" "$slot"
+capture_json=$(python3 "$APPLY" capture "$slot") || exit 0
+status=$(jq -r '.status' <<<"$capture_json")
+[[ "$status" == "ok" ]] || exit 0
+token=$(jq -r '.token' <<<"$capture_json")
+
+confirm=$(omarchy-menu-select "Assign $name → $token?" "Yes" "No") || exit 0
+[[ "$confirm" == "Yes" ]] || exit 0
+
+exec python3 "$APPLY" apply "$slot" "$token"

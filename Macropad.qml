@@ -5,11 +5,11 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// Omarchy shell "menu" plugin: pick a macropad control, then press the
-// real-keyboard shortcut you want assigned to it. The actual capture,
-// key-name translation, and ch57x-keyboard-tool upload happen in the
-// bundled omarchy-macropad-apply.py, spawned detached on selection — this
-// component is just the picker.
+// Omarchy shell "menu" plugin: pick a macropad control, press the real
+// shortcut you want assigned to it, then confirm before it's written to the
+// device. The actual capture, key-name translation, and
+// ch57x-keyboard-tool upload happen in the bundled
+// omarchy-macropad-apply.py — this component is the picker + confirm UI.
 Item {
   id: root
 
@@ -19,6 +19,12 @@ Item {
 
   property bool opened: false
   property int selectedIndex: 0
+
+  // "list" -> "capturing" -> "confirm" | "message" -> back to "list"
+  property string pickerState: "list"
+  property string capturedToken: ""
+  property string messageText: ""
+  property var currentValues: ({})
 
   readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "")
   readonly property string applyScript: pluginDir + "omarchy-macropad-apply.py"
@@ -32,6 +38,12 @@ Item {
     { label: "Knob ↻ turn right (CW)", slot: "knob_cw" }
   ]
 
+  function rowLabel(index) {
+    var s = root.slots[index]
+    var value = root.currentValues[s.slot]
+    return value ? s.label + "  →  " + value : s.label
+  }
+
   property color background: Color.menu.background
   property color foreground: Color.menu.text
   property color border: Color.menu.border
@@ -43,12 +55,24 @@ Item {
   property string fontFamily: Style.font.menuFamily
   property int contentMargin: Style.spacing.panelPadding
   property int rowHeight: Math.max(Style.space(40), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int cardWidth: Math.min(Style.space(360), panel.width - Style.gapsOut * 2)
-  property int cardHeight: Math.min(rowHeight * slots.length + contentMargin * 2, panel.height - Style.gapsOut * 2)
+  property int cardWidth: Math.min(Style.space(380), panel.width - Style.gapsOut * 2)
+  property int listCardHeight: Math.min(rowHeight * slots.length + contentMargin * 2, panel.height - Style.gapsOut * 2)
+  property int messageCardHeight: Math.min(Style.space(160), panel.height - Style.gapsOut * 2)
+  property int cardHeight: pickerState === "list" ? listCardHeight : messageCardHeight
+
+  function refreshCurrentValues() {
+    currentProc.running = false
+    currentProc.command = ["python3", root.applyScript, "current"]
+    currentProc.running = true
+  }
 
   function open(payloadJson) {
     root.opened = true
     root.selectedIndex = 0
+    root.pickerState = "list"
+    root.capturedToken = ""
+    root.messageText = ""
+    root.refreshCurrentValues()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -67,11 +91,57 @@ Item {
     else root.open("{}")
   }
 
+  function backToList() {
+    root.pickerState = "list"
+    root.capturedToken = ""
+    root.messageText = ""
+    root.refreshCurrentValues()
+  }
+
   function activateIndex(index) {
     if (index < 0 || index >= root.slots.length) return
-    var chosen = root.slots[index]
+    root.selectedIndex = index
+    root.pickerState = "capturing"
+    captureProc.running = false
+    captureProc.command = ["python3", root.applyScript, "capture", root.slots[index].slot]
+    captureProc.running = true
+  }
+
+  function handleCaptureResult(rawText) {
+    var data = ({})
+    try { data = JSON.parse(rawText || "{}") } catch (e) { data = ({}) }
+
+    if (data.status === "ok" && data.token) {
+      root.capturedToken = data.token
+      root.pickerState = "confirm"
+    } else if (data.status === "cancelled") {
+      root.backToList()
+    } else {
+      root.messageText = "Not captured: " + (data.message || "unknown error")
+      root.pickerState = "message"
+    }
+  }
+
+  function confirmApply() {
+    var s = root.slots[root.selectedIndex]
+    Quickshell.execDetached(["python3", root.applyScript, "apply", s.slot, root.capturedToken])
     root.dismiss()
-    Quickshell.execDetached(["python3", root.applyScript, chosen.slot])
+  }
+
+  Process {
+    id: captureProc
+    stdout: StdioCollector {
+      onStreamFinished: root.handleCaptureResult(text())
+    }
+  }
+
+  Process {
+    id: currentProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.currentValues = JSON.parse(text() || "{}") } catch (e) { root.currentValues = ({}) }
+      }
+    }
   }
 
   PanelWindow {
@@ -91,7 +161,7 @@ Item {
 
     MouseArea {
       anchors.fill: parent
-      onClicked: root.dismiss()
+      onClicked: if (root.pickerState === "list") root.dismiss()
     }
 
     BorderSurface {
@@ -113,28 +183,48 @@ Item {
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Escape) {
-            root.dismiss()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.selectedIndex = (root.selectedIndex - 1 + root.slots.length) % root.slots.length
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.selectedIndex = (root.selectedIndex + 1) % root.slots.length
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.activateIndex(root.selectedIndex)
-            event.accepted = true
+          if (root.pickerState === "list") {
+            if (event.key === Qt.Key_Escape) {
+              root.dismiss()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up) {
+              root.selectedIndex = (root.selectedIndex - 1 + root.slots.length) % root.slots.length
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down) {
+              root.selectedIndex = (root.selectedIndex + 1) % root.slots.length
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.activateIndex(root.selectedIndex)
+              event.accepted = true
+            }
+          } else if (root.pickerState === "confirm") {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.confirmApply()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Escape) {
+              root.backToList()
+              event.accepted = true
+            }
+          } else if (root.pickerState === "message") {
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Escape) {
+              root.backToList()
+              event.accepted = true
+            }
           }
+          // "capturing": keys are ignored here — the real capture happens at
+          // the raw evdev level in the spawned process, independent of
+          // Wayland focus, including Esc-to-cancel.
         }
       }
 
+      // --- List state ---
       Column {
         anchors.fill: parent
         anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
         anchors.bottomMargin: card.contentBottomInset
         anchors.leftMargin: card.contentLeftInset
+        visible: root.pickerState === "list"
 
         Repeater {
           model: root.slots.length
@@ -153,7 +243,7 @@ Item {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               anchors.leftMargin: Style.spacing.md
-              text: root.slots[index].label
+              text: root.rowLabel(index)
               color: hasCursor ? root.selectedText : root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -167,6 +257,44 @@ Item {
               onContainsMouseChanged: if (containsMouse) root.selectedIndex = index
               onClicked: root.activateIndex(index)
             }
+          }
+        }
+      }
+
+      // --- Capturing / confirm / message states ---
+      Column {
+        anchors.centerIn: parent
+        width: parent.width
+        spacing: Style.spacing.md
+        visible: root.pickerState !== "list"
+
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.WordWrap
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.title
+          text: {
+            if (root.pickerState === "capturing")
+              return "Press the shortcut for " + root.slots[root.selectedIndex].label + " now…"
+            if (root.pickerState === "confirm")
+              return root.slots[root.selectedIndex].label + "  →  " + root.capturedToken
+            return root.messageText
+          }
+        }
+
+        Text {
+          width: parent.width
+          horizontalAlignment: Text.AlignHCenter
+          color: root.foreground
+          opacity: 0.65
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          text: {
+            if (root.pickerState === "capturing") return "Esc alone to cancel"
+            if (root.pickerState === "confirm") return "Enter to confirm · Esc to cancel"
+            return "Enter or Esc to go back"
           }
         }
       }

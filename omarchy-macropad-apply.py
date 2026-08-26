@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
-"""Capture a keyboard shortcut from real input devices and push it to the
-3-key macropad's config via ch57x-keyboard-tool. Invoked by
-omarchy-macropad-remap with a single slot argument, e.g. "button1",
-"knob_ccw", "knob_press", "knob_cw".
+"""Capture a keyboard shortcut from real input devices and push it to a
+ch57x-family macropad's config via ch57x-keyboard-tool.
+
+Subcommands (invoked by the Omarchy plugin and the legacy CLI trigger):
+  capture <slot>          Wait for a real keypress, print {"status": ..., "token": ...}
+  apply <slot> <token>    Write token into mapping.yaml and upload to the device
+  current                 Print the currently-mapped token for every slot as JSON
+  <slot>                  Legacy one-shot mode: capture then apply immediately,
+                           no confirmation step (kept for old callers only).
+
+Splitting capture from apply lets the caller show the captured shortcut and
+get a confirmation before anything is written to the device — a stray
+keypress during capture no longer silently overwrites a mapping.
 """
+import json
 import os
 import select
 import subprocess
@@ -14,7 +24,21 @@ import yaml
 from evdev import InputDevice, list_devices, ecodes
 
 CONFIG_PATH = os.path.expanduser("~/.config/ch57x-keyboard/mapping.yaml")
-MACROPAD_VENDOR = 0x1189
+
+# Most ch57x/CH552G-family boards (including many AliExpress rebrands) share
+# this reference vendor id — it's also ch57x-keyboard-tool's own default.
+# Override for a different board via env vars rather than editing this file.
+MACROPAD_VENDOR = int(os.environ.get("MACROPAD_VENDOR_ID", "0x1189"), 0)
+MACROPAD_PRODUCT_ID = os.environ.get("MACROPAD_PRODUCT_ID")
+
+LABELS = {
+    "button1": "Key 1",
+    "button2": "Key 2",
+    "button3": "Key 3",
+    "knob_ccw": "Knob ↺ turn left (CCW)",
+    "knob_press": "Knob press",
+    "knob_cw": "Knob ↻ turn right (CW)",
+}
 
 DEFAULT_CONFIG = {
     "orientation": "normal",
@@ -167,47 +191,100 @@ def apply_slot(cfg, slot, token):
         knob[field] = token
 
 
+def ch57x_base_command():
+    cmd = ["ch57x-keyboard-tool"]
+    cmd += ["--vendor-id", str(MACROPAD_VENDOR)]
+    if MACROPAD_PRODUCT_ID:
+        cmd += ["--product-id", str(int(MACROPAD_PRODUCT_ID, 0))]
+    return cmd
+
+
 def upload(cfg):
     text = yaml.dump(cfg, sort_keys=False)
+    base = ch57x_base_command()
     validate = subprocess.run(
-        ["ch57x-keyboard-tool", "validate"], input=text, capture_output=True, text=True
+        base + ["validate"], input=text, capture_output=True, text=True
     )
     if validate.returncode != 0:
         return False, f"validate failed: {validate.stderr.strip() or validate.stdout.strip()}"
     upload_res = subprocess.run(
-        ["ch57x-keyboard-tool", "upload"], input=text, capture_output=True, text=True
+        base + ["upload"], input=text, capture_output=True, text=True
     )
     if upload_res.returncode != 0:
         return False, f"upload failed: {upload_res.stderr.strip() or upload_res.stdout.strip()}"
     return True, None
 
 
-def main():
-    if len(sys.argv) != 2:
-        print("usage: omarchy-macropad-apply.py <slot>", file=sys.stderr)
-        return 1
-    slot = sys.argv[1]
-
-    notify(f"Press the shortcut for {slot} now… (Esc alone = cancel)")
-
+def cmd_capture(slot):
+    label = LABELS.get(slot, slot)
+    notify(f"Press the shortcut for {label} now… (Esc alone = cancel)")
     captured, err = capture_combo()
     if captured is None:
-        notify(f"Not applied: {err}", urgency="critical" if err != "cancelled" else "normal")
-        return 0
-
+        if err != "cancelled":
+            notify(f"Not captured: {err}", urgency="critical")
+        print(json.dumps({"status": "cancelled" if err == "cancelled" else "error", "message": err}))
+        return 0 if err == "cancelled" else 1
     token = combo_to_token(captured)
+    print(json.dumps({"status": "ok", "token": token}))
+    return 0
 
+
+def cmd_apply(slot, token):
+    label = LABELS.get(slot, slot)
     cfg = load_config()
     apply_slot(cfg, slot, token)
-
     ok, err = upload(cfg)
     if not ok:
         notify(f"{token} captured but upload failed: {err}", urgency="critical")
         return 1
-
     save_config(cfg)
-    notify(f"{slot} → {token} ✅")
+    notify(f"{label} → {token} ✅")
     return 0
+
+
+def cmd_current():
+    cfg = load_config()
+    layer = cfg["layers"][0]
+    buttons = layer["buttons"][0]
+    knobs = layer["knobs"][0]
+    out = {
+        "button1": buttons[0] if len(buttons) > 0 else "",
+        "button2": buttons[1] if len(buttons) > 1 else "",
+        "button3": buttons[2] if len(buttons) > 2 else "",
+        "knob_ccw": knobs.get("ccw", ""),
+        "knob_press": knobs.get("press", ""),
+        "knob_cw": knobs.get("cw", ""),
+    }
+    print(json.dumps(out))
+    return 0
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        print("usage: omarchy-macropad-apply.py capture|apply|current|<slot>", file=sys.stderr)
+        return 1
+
+    if args[0] == "capture" and len(args) == 2:
+        return cmd_capture(args[1])
+    if args[0] == "apply" and len(args) == 3:
+        return cmd_apply(args[1], args[2])
+    if args[0] == "current" and len(args) == 1:
+        return cmd_current()
+    if len(args) == 1 and args[0] in LABELS:
+        # Legacy one-shot mode: capture then apply immediately, no
+        # confirmation. Kept only for backward compatibility.
+        slot = args[0]
+        label = LABELS.get(slot, slot)
+        notify(f"Press the shortcut for {label} now… (Esc alone = cancel)")
+        captured, err = capture_combo()
+        if captured is None:
+            notify(f"Not applied: {err}", urgency="critical" if err != "cancelled" else "normal")
+            return 0
+        return cmd_apply(slot, combo_to_token(captured))
+
+    print("usage: omarchy-macropad-apply.py capture|apply|current|<slot>", file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":
