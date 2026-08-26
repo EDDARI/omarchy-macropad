@@ -131,7 +131,7 @@ Item {
   Process {
     id: captureProc
     stdout: StdioCollector {
-      onStreamFinished: root.handleCaptureResult(text())
+      onStreamFinished: root.handleCaptureResult(text)
     }
   }
 
@@ -139,7 +139,7 @@ Item {
     id: currentProc
     stdout: StdioCollector {
       onStreamFinished: {
-        try { root.currentValues = JSON.parse(text() || "{}") } catch (e) { root.currentValues = ({}) }
+        try { root.currentValues = JSON.parse(text || "{}") } catch (e) { root.currentValues = ({}) }
       }
     }
   }
