@@ -95,11 +95,21 @@ remappable controls total, plus a seventh **LED backlight** entry.
 There's no public documentation of what each mode number looks like for this
 specific board — the tool just forwards the raw integer and the firmware
 picks an effect, silently accepting any value. So instead of named colors,
-picking **LED backlight** from the menu shows a plain numbered list
-(`Mode 0`, `Mode 1`, …), with the currently-set one marked `(current)`.
-Pick a mode and it's sent to the device immediately. The last mode you pick
-is remembered (`~/.config/ch57x-keyboard/led_mode`) and shown next to the
-menu entry.
+picking **LED backlight** shows a plain numbered list (`Mode 0`, `Mode 1`, …).
+The last mode you picked is remembered (`~/.config/ch57x-keyboard/led_mode`)
+and shown next to the menu entry.
+
+- **Option B's plugin** (`Macropad.qml`) previews live: every move through
+  the list — arrow keys, mouse hover, or scrolling over it — sends that mode
+  to the device right away (debounced, so a fast scrub doesn't flood it with
+  commands), so you can see the difference between modes as you browse.
+  `Enter` locks in whichever mode you're on; `Esc` reverts to whatever was
+  active before you opened the list.
+- **Option A's trigger** (`bin/omarchy-macropad-remap`) shows the same
+  numbered list but without live preview — `omarchy-menu-select` is a
+  generic picker with no per-highlight callback, so it only applies once you
+  press `Enter` on a mode. For the live-preview experience, use Option B (or
+  its bar icon).
 
 ### A different ch57x-family board
 
