@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "eddari.macropad",
   "name": "Macropad Remap",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "EDDARI",
   "license": "MIT",
   "description": "Pick a control on a 3-key ch57x/CH552G RGB macropad, remap it or cycle its LED backlight",

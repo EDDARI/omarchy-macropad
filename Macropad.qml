@@ -6,10 +6,15 @@ import qs.Commons
 import qs.Ui
 
 // Omarchy shell "menu" plugin: pick a macropad control, press the real
-// shortcut you want assigned to it, then confirm before it's written to the
-// device. The actual capture, key-name translation, and
-// ch57x-keyboard-tool upload happen in the bundled
-// omarchy-macropad-apply.py — this component is the picker + confirm UI.
+// shortcut you want assigned to it (or browse LED modes with live preview),
+// then confirm before anything is written to the device. Rows, header, and
+// selection styling follow the same conventions as Omarchy's built-in menu
+// (omarchy.menu's Menu.qml) — BorderSurface rows with a reserved left
+// accent border, heading-weight label + dim caption detail line, theme
+// tokens pulled from the same [menu] section — so this reads as a native
+// part of the shell rather than a bolted-on popup. The actual capture,
+// key-name translation, and ch57x-keyboard-tool calls happen in the
+// bundled omarchy-macropad-apply.py — this component is just the UI.
 Item {
   id: root
 
@@ -41,23 +46,36 @@ Item {
   readonly property string applyScript: pluginDir + "omarchy-macropad-apply.py"
 
   readonly property var slots: [
-    { label: "Key 1", slot: "button1" },
-    { label: "Key 2", slot: "button2" },
-    { label: "Key 3", slot: "button3" },
-    { label: "Knob ↺ turn left (CCW)", slot: "knob_ccw" },
-    { label: "Knob press (click)", slot: "knob_press" },
-    { label: "Knob ↻ turn right (CW)", slot: "knob_cw" },
-    { label: "LED backlight", slot: "led" }
+    { label: "Key 1", slot: "button1", icon: "①" },
+    { label: "Key 2", slot: "button2", icon: "②" },
+    { label: "Key 3", slot: "button3", icon: "③" },
+    { label: "Knob turn left (CCW)", slot: "knob_ccw", icon: "↺" },
+    { label: "Knob press", slot: "knob_press", icon: "●" },
+    { label: "Knob turn right (CW)", slot: "knob_cw", icon: "↻" },
+    { label: "LED backlight", slot: "led", icon: "◉" }
   ]
 
-  function rowLabel(index) {
+  function rowDetail(index) {
     var s = root.slots[index]
-    if (s.slot === "led")
-      return s.label + "  →  mode " + (root.currentValues.led_mode || 0)
+    if (s.slot === "led") return "mode " + (root.currentValues.led_mode || 0)
     var value = root.currentValues[s.slot]
-    return value ? s.label + "  →  " + value : s.label
+    return value || "not assigned"
   }
 
+  function ledRowDetail(index) {
+    return index === root.ledOriginalMode ? "current" : ""
+  }
+
+  function headerTitle() {
+    if (root.pickerState === "led") return "LED backlight"
+    if (root.pickerState === "capturing") return "Capture shortcut"
+    if (root.pickerState === "confirm") return "Confirm"
+    return "Macropad"
+  }
+
+  // --- Theme tokens, wired the same way as Omarchy's built-in menu so a
+  // theme's [menu] section (colors, selected-border, corner radius, fonts,
+  // spacing scale) applies here identically. ---
   property color background: Color.menu.background
   property color foreground: Color.menu.text
   property color border: Color.menu.border
@@ -65,21 +83,34 @@ Item {
   property color scrim: Color.menu.scrim
   property color selectedBackground: Color.menu.selectedBackground
   property color selectedText: Color.menu.selectedText
+  property color selectedBorder: Color.menu.selectedBorder
+  property var selectedBorderSpec: Border.surfaceSpec("menu", "selected-border", selectedBorder, 0)
+  readonly property real rowReservedBorderLeft: Border.left(selectedBorderSpec)
   readonly property int cornerRadius: Style.cornerRadius
   property string fontFamily: Style.font.menuFamily
   property int contentMargin: Style.spacing.panelPadding
-  property int rowHeight: Math.max(Style.space(40), Style.font.title + Style.spacing.controlPaddingY * 2)
+  property int contentSpacing: Style.spacing.md
+  property int headerHeight: Math.max(Style.space(34), Style.font.heading + Style.spacing.controlPaddingY * 2)
+  property int rowSpacing: Style.spacing.xs
+  property int rowHeight: Math.max(Style.space(56), Style.font.heading + Style.font.bodySmall + Style.space(4) + Style.spacing.rowPaddingX * 2)
+  property int ledHintLineHeight: Style.font.bodySmall + Style.space(6)
   property int cardWidth: Math.min(Style.space(480), panel.width - Style.gapsOut * 2)
-  property int listCardHeight: Math.min(rowHeight * slots.length + contentMargin * 2, panel.height - Style.gapsOut * 2)
-  property int messageCardHeight: Math.min(Style.space(160), panel.height - Style.gapsOut * 2)
-  // Shows up to 8 modes at a time; scrolls (mouse wheel or ↑/↓) for the rest.
-  property int ledHintHeight: Style.font.body + Style.spacing.md
-  property int ledCardHeight: Math.min(rowHeight * Math.min(ledModeCount, 8) + ledHintHeight + contentMargin * 2, panel.height - Style.gapsOut * 2)
-  property int cardHeight: {
-    if (pickerState === "list") return listCardHeight
-    if (pickerState === "led") return ledCardHeight
-    return messageCardHeight
+
+  property int listBodyHeight: slots.length * rowHeight + (slots.length - 1) * rowSpacing
+  property int ledVisibleRows: Math.min(ledModeCount, 6)
+  property int ledBodyHeight: ledHintLineHeight + Style.space(4)
+    + ledVisibleRows * rowHeight + (ledVisibleRows - 1) * rowSpacing
+  property int messageBodyHeight: Style.space(90)
+
+  property int bodyHeight: {
+    var raw = messageBodyHeight
+    if (pickerState === "list") raw = listBodyHeight
+    else if (pickerState === "led") raw = ledBodyHeight
+    var maxRaw = panel.height - Style.gapsOut * 2 - contentMargin * 2 - headerHeight - contentSpacing
+    return Math.max(rowHeight, Math.min(raw, maxRaw))
   }
+
+  property int cardHeight: Math.min(contentMargin * 2 + headerHeight + contentSpacing + bodyHeight, panel.height - Style.gapsOut * 2)
 
   function refreshCurrentValues() {
     currentProc.running = false
@@ -133,12 +164,6 @@ Item {
     captureProc.running = false
     captureProc.command = ["python3", root.applyScript, "capture", root.slots[index].slot]
     captureProc.running = true
-  }
-
-  function ledRowLabel(index) {
-    var label = "Mode " + index
-    if (index === root.ledOriginalMode) label += "  (current)"
-    return label
   }
 
   // Moving through the list previews live: every cursor change sends that
@@ -309,157 +334,252 @@ Item {
         }
       }
 
-      // --- List state ---
       Column {
         anchors.fill: parent
         anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
         anchors.bottomMargin: card.contentBottomInset
         anchors.leftMargin: card.contentLeftInset
-        visible: root.pickerState === "list"
+        spacing: root.contentSpacing
 
-        Repeater {
-          model: root.slots.length
+        // --- Header: same treatment as Omarchy's built-in menu (a plain
+        // heading-weight line naming the current context). ---
+        Rectangle {
+          width: parent.width
+          height: root.headerHeight
+          color: "transparent"
 
-          Rectangle {
-            required property int index
-            readonly property bool hasCursor: index === root.selectedIndex
+          Text {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.headerTitle()
+            color: root.foreground
+            opacity: 0.85
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.heading
+            font.weight: Font.Medium
+            elide: Text.ElideRight
+          }
+        }
 
+        Item {
+          width: parent.width
+          height: root.bodyHeight
+
+          // --- List state ---
+          ListView {
+            anchors.fill: parent
+            visible: root.pickerState === "list"
+            interactive: false
+            clip: true
+            spacing: root.rowSpacing
+            model: root.slots.length
+            currentIndex: root.selectedIndex
+            highlightFollowsCurrentItem: true
+
+            delegate: BorderSurface {
+              id: slotRow
+              required property int index
+              readonly property bool hasCursor: index === root.selectedIndex
+              readonly property var slotData: root.slots[index]
+
+              width: ListView.view.width
+              height: root.rowHeight
+              radius: root.cornerRadius
+              color: hasCursor ? root.selectedBackground : "transparent"
+              borderSpec: hasCursor ? root.selectedBorderSpec : Border.none()
+
+              Text {
+                id: slotIcon
+                text: slotRow.slotData.icon
+                color: slotRow.hasCursor ? root.selectedText : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.iconLarge
+                width: Style.space(28)
+                horizontalAlignment: Text.AlignHCenter
+                anchors.left: parent.left
+                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Column {
+                anchors.left: slotIcon.right
+                anchors.leftMargin: Style.space(8)
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+
+                Text {
+                  width: parent.width
+                  text: slotRow.slotData.label
+                  color: slotRow.hasCursor ? root.selectedText : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.heading
+                  font.weight: Font.Medium
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  text: root.rowDetail(slotRow.index)
+                  color: slotRow.hasCursor ? root.selectedText : root.foreground
+                  opacity: 0.55
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onContainsMouseChanged: if (containsMouse) root.selectedIndex = slotRow.index
+                onClicked: root.activateIndex(slotRow.index)
+              }
+            }
+          }
+
+          // --- LED mode list state ---
+          Column {
+            anchors.fill: parent
+            visible: root.pickerState === "led"
+            spacing: Style.space(4)
+
+            Text {
+              id: ledHint
+              width: parent.width
+              height: root.ledHintLineHeight
+              verticalAlignment: Text.AlignVCenter
+              text: "↑/↓ or scroll to preview  ·  Enter to pick  ·  Esc to cancel"
+              color: root.foreground
+              opacity: 0.55
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              elide: Text.ElideRight
+            }
+
+            ListView {
+              id: ledListView
+              width: parent.width
+              height: parent.height - ledHint.height - parent.spacing
+              clip: true
+              spacing: root.rowSpacing
+              model: root.ledModeCount
+              currentIndex: root.ledCursor
+              highlightFollowsCurrentItem: true
+
+              // Scrolling over the list previews modes live, same as ↑/↓.
+              WheelHandler {
+                onWheel: function(event) {
+                  if (event.angleDelta.y === 0) return
+                  root.moveLedCursor(root.ledCursor + (event.angleDelta.y > 0 ? -1 : 1))
+                }
+              }
+
+              delegate: BorderSurface {
+                id: ledDelegate
+                required property int index
+                readonly property bool hasCursor: index === root.ledCursor
+
+                width: ListView.view.width
+                height: root.rowHeight
+                radius: root.cornerRadius
+                color: hasCursor ? root.selectedBackground : "transparent"
+                borderSpec: hasCursor ? root.selectedBorderSpec : Border.none()
+
+                Text {
+                  id: ledIcon
+                  text: "◉"
+                  color: ledDelegate.hasCursor ? root.selectedText : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.iconLarge
+                  width: Style.space(28)
+                  horizontalAlignment: Text.AlignHCenter
+                  anchors.left: parent.left
+                  anchors.leftMargin: root.rowReservedBorderLeft + Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Column {
+                  anchors.left: ledIcon.right
+                  anchors.leftMargin: Style.space(8)
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(2)
+
+                  Text {
+                    width: parent.width
+                    text: "Mode " + ledDelegate.index
+                    color: ledDelegate.hasCursor ? root.selectedText : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.heading
+                    font.weight: Font.Medium
+                    elide: Text.ElideRight
+                  }
+
+                  Text {
+                    width: parent.width
+                    text: root.ledRowDetail(ledDelegate.index)
+                    visible: text.length > 0
+                    color: ledDelegate.hasCursor ? root.selectedText : root.foreground
+                    opacity: 0.55
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onContainsMouseChanged: if (containsMouse) root.moveLedCursor(ledDelegate.index)
+                  onClicked: root.finalizeLedMode()
+                }
+              }
+            }
+          }
+
+          // --- Capturing / confirm / message states ---
+          Column {
+            anchors.centerIn: parent
             width: parent.width
-            height: root.rowHeight
-            radius: root.cornerRadius
-            color: hasCursor ? root.selectedBackground : "transparent"
+            spacing: Style.spacing.md
+            visible: root.pickerState === "capturing" || root.pickerState === "confirm" || root.pickerState === "message"
 
             Text {
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: Style.spacing.md
-              text: root.rowLabel(index)
-              color: hasCursor ? root.selectedText : root.foreground
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+              color: root.foreground
               font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              elide: Text.ElideRight
+              font.pixelSize: Style.font.title
+              text: {
+                if (root.pickerState === "capturing")
+                  return "Press the shortcut for " + root.slots[root.selectedIndex].label + " now…"
+                if (root.pickerState === "confirm")
+                  return root.slots[root.selectedIndex].label + "  →  " + root.capturedToken
+                return root.messageText
+              }
             }
-
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onContainsMouseChanged: if (containsMouse) root.selectedIndex = index
-              onClicked: root.activateIndex(index)
-            }
-          }
-        }
-      }
-
-      // --- LED mode list state ---
-      Column {
-        id: ledColumn
-        anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
-        visible: root.pickerState === "led"
-
-        Text {
-          id: ledHint
-          width: parent.width
-          height: root.ledHintHeight
-          verticalAlignment: Text.AlignVCenter
-          color: root.foreground
-          opacity: 0.65
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          text: "↑/↓ or scroll to preview  ·  Enter to pick mode " + root.ledCursor + "  ·  Esc to cancel"
-          elide: Text.ElideRight
-        }
-
-        ListView {
-          id: ledListView
-          width: parent.width
-          height: parent.height - ledHint.height
-          clip: true
-          model: root.ledModeCount
-          currentIndex: root.ledCursor
-          highlightFollowsCurrentItem: true
-
-          // Scrolling over the list previews modes live, same as ↑/↓.
-          WheelHandler {
-            onWheel: function(event) {
-              if (event.angleDelta.y === 0) return
-              root.moveLedCursor(root.ledCursor + (event.angleDelta.y > 0 ? -1 : 1))
-            }
-          }
-
-          delegate: Rectangle {
-            id: ledDelegate
-            required property int index
-            readonly property bool hasCursor: index === root.ledCursor
-
-            width: ListView.view.width
-            height: root.rowHeight
-            radius: root.cornerRadius
-            color: hasCursor ? root.selectedBackground : "transparent"
 
             Text {
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: Style.spacing.md
-              text: root.ledRowLabel(ledDelegate.index)
-              color: ledDelegate.hasCursor ? root.selectedText : root.foreground
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              color: root.foreground
+              opacity: 0.65
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
-              elide: Text.ElideRight
+              text: {
+                if (root.pickerState === "capturing") return "Esc alone to cancel"
+                if (root.pickerState === "confirm") return "Enter to confirm · Esc to cancel"
+                return "Enter or Esc to go back"
+              }
             }
-
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onContainsMouseChanged: if (containsMouse) root.moveLedCursor(ledDelegate.index)
-              onClicked: root.finalizeLedMode()
-            }
-          }
-        }
-      }
-
-      // --- Capturing / confirm / message states ---
-      Column {
-        anchors.centerIn: parent
-        width: parent.width
-        spacing: Style.spacing.md
-        visible: root.pickerState === "capturing" || root.pickerState === "confirm" || root.pickerState === "message"
-
-        Text {
-          width: parent.width
-          horizontalAlignment: Text.AlignHCenter
-          wrapMode: Text.WordWrap
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.title
-          text: {
-            if (root.pickerState === "capturing")
-              return "Press the shortcut for " + root.slots[root.selectedIndex].label + " now…"
-            if (root.pickerState === "confirm")
-              return root.slots[root.selectedIndex].label + "  →  " + root.capturedToken
-            return root.messageText
-          }
-        }
-
-        Text {
-          width: parent.width
-          horizontalAlignment: Text.AlignHCenter
-          color: root.foreground
-          opacity: 0.65
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          text: {
-            if (root.pickerState === "capturing") return "Esc alone to cancel"
-            if (root.pickerState === "confirm") return "Enter to confirm · Esc to cancel"
-            return "Enter or Esc to go back"
           }
         }
       }

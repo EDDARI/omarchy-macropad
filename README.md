@@ -67,7 +67,13 @@ Don't run both options — they'd fight over the same `SUPER + M` binding.
   `omarchy-menu-select` popup outside the shell process.
 - **Option B's picker** (`Macropad.qml`) is a native Quickshell menu running
   inside `omarchy-shell` itself, with an optional bar-icon launcher
-  (`BarWidget.qml`).
+  (`BarWidget.qml`). It follows the same look as Omarchy's built-in menu —
+  a heading-weight header, icon + two-line rows (label above, current value
+  dimmed below), and the selected row picking up the theme's accent border
+  — by pulling its colors, spacing, and typography from the same `[menu]`
+  theme tokens (`Color.menu.*`, `Style.font.*`, `Style.spacing.*`) rather
+  than hardcoding its own, so a theme change or `omarchy theme` switch
+  reskins it automatically along with everything else.
 - Either lists the six controls with what they're **currently** mapped to
   (e.g. `Key 1 → win-k`), so you can see what you're about to change.
 - Picking a control spawns `omarchy-macropad-apply.py capture <slot>`, which
