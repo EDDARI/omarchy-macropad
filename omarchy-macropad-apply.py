@@ -5,7 +5,9 @@ ch57x-family macropad's config via ch57x-keyboard-tool.
 Subcommands (invoked by the Omarchy plugin and the legacy CLI trigger):
   capture <slot>          Wait for a real keypress, print {"status": ..., "token": ...}
   apply <slot> <token>    Write token into mapping.yaml and upload to the device
-  led <mode>              Send LED backlight mode <mode> (integer) to the device
+  led <mode> [quiet]      Send LED backlight mode <mode> (integer) to the device;
+                           "quiet" suppresses the notify-send (used while live-
+                           previewing modes as the user browses a list)
   current                 Print the currently-mapped token for every slot as JSON,
                            plus the last LED mode set via this tool ("led_mode")
   <slot>                  Legacy one-shot mode: capture then apply immediately,
@@ -269,7 +271,7 @@ def cmd_apply(slot, token):
     return 0
 
 
-def cmd_led(mode_str):
+def cmd_led(mode_str, quiet=False):
     try:
         mode = int(mode_str)
     except ValueError:
@@ -279,11 +281,16 @@ def cmd_led(mode_str):
     result = subprocess.run(base + ["led", str(mode)], capture_output=True, text=True)
     if result.returncode != 0:
         err = result.stderr.strip() or result.stdout.strip()
-        notify(f"LED mode {mode} failed: {err}", urgency="critical")
+        if not quiet:
+            notify(f"LED mode {mode} failed: {err}", urgency="critical")
         print(json.dumps({"status": "error", "message": err}))
         return 1
     save_led_mode(mode)
-    notify(f"LED backlight → mode {mode} ✅")
+    # `quiet` is used while live-previewing as the user browses the mode
+    # list — one notification per mode would spam notify-send. The caller
+    # sends a final, non-quiet `led` once the user settles on a mode.
+    if not quiet:
+        notify(f"LED backlight → mode {mode} ✅")
     print(json.dumps({"status": "ok", "mode": mode}))
     return 0
 
@@ -316,8 +323,9 @@ def main():
         return cmd_capture(args[1])
     if args[0] == "apply" and len(args) == 3:
         return cmd_apply(args[1], args[2])
-    if args[0] == "led" and len(args) == 2:
-        return cmd_led(args[1])
+    if args[0] == "led" and len(args) in (2, 3):
+        quiet = len(args) == 3 and args[2] == "quiet"
+        return cmd_led(args[1], quiet=quiet)
     if args[0] == "current" and len(args) == 1:
         return cmd_current()
     if len(args) == 1 and args[0] in LABELS:

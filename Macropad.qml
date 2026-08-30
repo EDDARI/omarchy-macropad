@@ -21,12 +21,15 @@ Item {
   property int selectedIndex: 0
 
   // "list" -> "capturing" -> "confirm" | "message" -> back to "list"
-  // "list" -> "led" (pick a mode from a list, applies on Enter) -> "list"
+  // "list" -> "led" (browse a mode list, live preview on every move,
+  //          Enter locks it in, Esc reverts to what it was) -> "list"
   property string pickerState: "list"
   property string capturedToken: ""
   property string messageText: ""
   property var currentValues: ({})
   property int ledCursor: 0
+  property int ledOriginalMode: 0
+  property bool ledPreviewed: false
   property bool ledApplying: false
 
   // Empirically-picked upper bound for the mode list — see LED_MODE_COUNT's
@@ -70,7 +73,8 @@ Item {
   property int listCardHeight: Math.min(rowHeight * slots.length + contentMargin * 2, panel.height - Style.gapsOut * 2)
   property int messageCardHeight: Math.min(Style.space(160), panel.height - Style.gapsOut * 2)
   // Shows up to 8 modes at a time; scrolls (mouse wheel or ↑/↓) for the rest.
-  property int ledCardHeight: Math.min(rowHeight * Math.min(ledModeCount, 8) + contentMargin * 2, panel.height - Style.gapsOut * 2)
+  property int ledHintHeight: Style.font.body + Style.spacing.md
+  property int ledCardHeight: Math.min(rowHeight * Math.min(ledModeCount, 8) + ledHintHeight + contentMargin * 2, panel.height - Style.gapsOut * 2)
   property int cardHeight: {
     if (pickerState === "list") return listCardHeight
     if (pickerState === "led") return ledCardHeight
@@ -120,6 +124,8 @@ Item {
     root.selectedIndex = index
     if (root.slots[index].slot === "led") {
       root.ledCursor = root.currentValues.led_mode || 0
+      root.ledOriginalMode = root.ledCursor
+      root.ledPreviewed = false
       root.pickerState = "led"
       return
     }
@@ -131,16 +137,42 @@ Item {
 
   function ledRowLabel(index) {
     var label = "Mode " + index
-    if (index === (root.currentValues.led_mode || 0)) label += "  (current)"
+    if (index === root.ledOriginalMode) label += "  (current)"
     return label
   }
 
-  function applyLedMode(mode) {
+  // Moving through the list previews live: every cursor change sends that
+  // mode straight to the device (debounced so holding an arrow key or
+  // scrolling fast doesn't flood it with commands), so the user can see the
+  // difference between modes before committing to one.
+  function moveLedCursor(toIndex) {
+    var next = ((toIndex % root.ledModeCount) + root.ledModeCount) % root.ledModeCount
+    if (next === root.ledCursor) return
+    root.ledCursor = next
+    root.ledPreviewed = true
+    ledPreviewTimer.restart()
+  }
+
+  function finalizeLedMode() {
     if (root.ledApplying) return
     root.ledApplying = true
     ledApplyProc.running = false
-    ledApplyProc.command = ["python3", root.applyScript, "led", String(mode)]
+    ledApplyProc.command = ["python3", root.applyScript, "led", String(root.ledCursor)]
     ledApplyProc.running = true
+  }
+
+  function cancelLedPreview() {
+    ledPreviewTimer.stop()
+    if (root.ledPreviewed && root.ledCursor !== root.ledOriginalMode)
+      Quickshell.execDetached(["python3", root.applyScript, "led", String(root.ledOriginalMode), "quiet"])
+    root.backToList()
+  }
+
+  Timer {
+    id: ledPreviewTimer
+    interval: 120
+    repeat: false
+    onTriggered: Quickshell.execDetached(["python3", root.applyScript, "led", String(root.ledCursor), "quiet"])
   }
 
   function handleCaptureResult(rawText) {
@@ -258,16 +290,16 @@ Item {
             }
           } else if (root.pickerState === "led") {
             if (event.key === Qt.Key_Escape) {
-              root.backToList()
+              root.cancelLedPreview()
               event.accepted = true
             } else if (event.key === Qt.Key_Up) {
-              root.ledCursor = (root.ledCursor - 1 + root.ledModeCount) % root.ledModeCount
+              root.moveLedCursor(root.ledCursor - 1)
               event.accepted = true
             } else if (event.key === Qt.Key_Down) {
-              root.ledCursor = (root.ledCursor + 1) % root.ledModeCount
+              root.moveLedCursor(root.ledCursor + 1)
               event.accepted = true
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              root.applyLedMode(root.ledCursor)
+              root.finalizeLedMode()
               event.accepted = true
             }
           }
@@ -322,47 +354,74 @@ Item {
       }
 
       // --- LED mode list state ---
-      ListView {
-        id: ledListView
+      Column {
+        id: ledColumn
         anchors.fill: parent
         anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
         anchors.bottomMargin: card.contentBottomInset
         anchors.leftMargin: card.contentLeftInset
         visible: root.pickerState === "led"
-        clip: true
-        model: root.ledModeCount
-        currentIndex: root.ledCursor
-        highlightFollowsCurrentItem: true
 
-        delegate: Rectangle {
-          id: ledDelegate
-          required property int index
-          readonly property bool hasCursor: index === root.ledCursor
+        Text {
+          id: ledHint
+          width: parent.width
+          height: root.ledHintHeight
+          verticalAlignment: Text.AlignVCenter
+          color: root.foreground
+          opacity: 0.65
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+          text: "↑/↓ or scroll to preview  ·  Enter to pick mode " + root.ledCursor + "  ·  Esc to cancel"
+          elide: Text.ElideRight
+        }
 
-          width: ListView.view.width
-          height: root.rowHeight
-          radius: root.cornerRadius
-          color: hasCursor ? root.selectedBackground : "transparent"
+        ListView {
+          id: ledListView
+          width: parent.width
+          height: parent.height - ledHint.height
+          clip: true
+          model: root.ledModeCount
+          currentIndex: root.ledCursor
+          highlightFollowsCurrentItem: true
 
-          Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: Style.spacing.md
-            text: root.ledRowLabel(ledDelegate.index)
-            color: ledDelegate.hasCursor ? root.selectedText : root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            elide: Text.ElideRight
+          // Scrolling over the list previews modes live, same as ↑/↓.
+          WheelHandler {
+            onWheel: function(event) {
+              if (event.angleDelta.y === 0) return
+              root.moveLedCursor(root.ledCursor + (event.angleDelta.y > 0 ? -1 : 1))
+            }
           }
 
-          MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onContainsMouseChanged: if (containsMouse) root.ledCursor = ledDelegate.index
-            onClicked: root.applyLedMode(ledDelegate.index)
+          delegate: Rectangle {
+            id: ledDelegate
+            required property int index
+            readonly property bool hasCursor: index === root.ledCursor
+
+            width: ListView.view.width
+            height: root.rowHeight
+            radius: root.cornerRadius
+            color: hasCursor ? root.selectedBackground : "transparent"
+
+            Text {
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.leftMargin: Style.spacing.md
+              text: root.ledRowLabel(ledDelegate.index)
+              color: ledDelegate.hasCursor ? root.selectedText : root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              elide: Text.ElideRight
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onContainsMouseChanged: if (containsMouse) root.moveLedCursor(ledDelegate.index)
+              onClicked: root.finalizeLedMode()
+            }
           }
         }
       }
