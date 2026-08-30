@@ -8,7 +8,7 @@ Remap a cheap 3-key RGB macropad (ch57x/CH552G family, e.g. USB `1189:8890` —
 sold under many AliExpress brand names) without touching a config file or
 Windows software: pick a key or the knob from a menu, see what it's
 currently set to, press the real shortcut you want assigned, and confirm.
-Done.
+Done. Also lets you cycle the LED backlight and see the change live.
 
 Two ways to install it — pick one.
 
@@ -86,7 +86,21 @@ Don't run both options — they'd fight over the same `SUPER + M` binding.
 
 The device only supports one layer (no layer-switch button), so this covers
 the 3 keys and the knob's turn-left/press/turn-right actions — six
-remappable controls total.
+remappable controls total, plus a seventh **LED backlight** entry.
+
+### LED backlight
+
+`ch57x-keyboard-tool` also exposes a `led <mode>` command
+(`ch57x-keyboard-tool led --help`), and this device (`1189:8890`) accepts it.
+There's no public documentation of what each mode number looks like for this
+specific board — the tool just forwards the raw integer and the firmware
+picks an effect, silently accepting any value. So instead of a static list of
+named colors, picking **LED backlight** from the menu opens a live
+**Next ▶ / ◀ Previous** cycle: each step sends the next mode straight to the
+device so you can watch the backlight change in real time and stop
+wherever you like (`Enter`/`Esc` to confirm and close, arrow keys to keep
+cycling). The last mode you land on is remembered
+(`~/.config/ch57x-keyboard/led_mode`) and shown next to the menu entry.
 
 ### A different ch57x-family board
 

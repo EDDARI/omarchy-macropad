@@ -21,10 +21,17 @@ Item {
   property int selectedIndex: 0
 
   // "list" -> "capturing" -> "confirm" | "message" -> back to "list"
+  // "list" -> "led" (live-cycles the backlight, applies as you go) -> "list"
   property string pickerState: "list"
   property string capturedToken: ""
   property string messageText: ""
   property var currentValues: ({})
+  property int ledMode: 0
+
+  // Empirically-picked wraparound range for the Next/Previous cycle — see
+  // LED_MODE_COUNT's comment in omarchy-macropad-apply.py for why this isn't
+  // a confirmed mode count.
+  readonly property int ledModeCount: 16
 
   readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "")
   readonly property string applyScript: pluginDir + "omarchy-macropad-apply.py"
@@ -35,11 +42,14 @@ Item {
     { label: "Key 3", slot: "button3" },
     { label: "Knob ↺ turn left (CCW)", slot: "knob_ccw" },
     { label: "Knob press (click)", slot: "knob_press" },
-    { label: "Knob ↻ turn right (CW)", slot: "knob_cw" }
+    { label: "Knob ↻ turn right (CW)", slot: "knob_cw" },
+    { label: "LED backlight", slot: "led" }
   ]
 
   function rowLabel(index) {
     var s = root.slots[index]
+    if (s.slot === "led")
+      return s.label + "  →  mode " + (root.currentValues.led_mode || 0)
     var value = root.currentValues[s.slot]
     return value ? s.label + "  →  " + value : s.label
   }
@@ -101,10 +111,20 @@ Item {
   function activateIndex(index) {
     if (index < 0 || index >= root.slots.length) return
     root.selectedIndex = index
+    if (root.slots[index].slot === "led") {
+      root.ledMode = root.currentValues.led_mode || 0
+      root.pickerState = "led"
+      return
+    }
     root.pickerState = "capturing"
     captureProc.running = false
     captureProc.command = ["python3", root.applyScript, "capture", root.slots[index].slot]
     captureProc.running = true
+  }
+
+  function stepLed(delta) {
+    root.ledMode = (root.ledMode + delta + root.ledModeCount) % root.ledModeCount
+    Quickshell.execDetached(["python3", root.applyScript, "led", String(root.ledMode)])
   }
 
   function handleCaptureResult(rawText) {
@@ -210,6 +230,17 @@ Item {
               root.backToList()
               event.accepted = true
             }
+          } else if (root.pickerState === "led") {
+            if (event.key === Qt.Key_Down || event.key === Qt.Key_Right) {
+              root.stepLed(1)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Left) {
+              root.stepLed(-1)
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Escape) {
+              root.backToList()
+              event.accepted = true
+            }
           }
           // "capturing": keys are ignored here — the real capture happens at
           // the raw evdev level in the spawned process, independent of
@@ -280,6 +311,8 @@ Item {
               return "Press the shortcut for " + root.slots[root.selectedIndex].label + " now…"
             if (root.pickerState === "confirm")
               return root.slots[root.selectedIndex].label + "  →  " + root.capturedToken
+            if (root.pickerState === "led")
+              return "LED backlight — mode " + root.ledMode
             return root.messageText
           }
         }
@@ -294,6 +327,7 @@ Item {
           text: {
             if (root.pickerState === "capturing") return "Esc alone to cancel"
             if (root.pickerState === "confirm") return "Enter to confirm · Esc to cancel"
+            if (root.pickerState === "led") return "↑/↓ to cycle, applied live · Enter or Esc when done"
             return "Enter or Esc to go back"
           }
         }

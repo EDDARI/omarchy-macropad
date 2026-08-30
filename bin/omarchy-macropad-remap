@@ -18,8 +18,14 @@ declare -A SLOTS=(
   ["Knob ⟲ turn left (CCW)"]="knob_ccw"
   ["Knob press (click)"]="knob_press"
   ["Knob ⟳ turn right (CW)"]="knob_cw"
+  ["LED backlight"]="led"
 )
-ORDER=("Key 1" "Key 2" "Key 3" "Knob ⟲ turn left (CCW)" "Knob press (click)" "Knob ⟳ turn right (CW)")
+ORDER=("Key 1" "Key 2" "Key 3" "Knob ⟲ turn left (CCW)" "Knob press (click)" "Knob ⟳ turn right (CW)" "LED backlight")
+
+# Empirically-picked wraparound range for the Next/Previous cycle below — see
+# LED_MODE_COUNT's comment in omarchy-macropad-apply.py for why this isn't a
+# confirmed mode count.
+LED_MODE_COUNT=16
 
 current_json=$(python3 "$APPLY" current 2>/dev/null || echo '{}')
 
@@ -27,11 +33,16 @@ labels=()
 declare -A LABEL_TO_NAME=()
 for name in "${ORDER[@]}"; do
   slot="${SLOTS[$name]}"
-  value=$(jq -r --arg k "$slot" '.[$k] // ""' <<<"$current_json")
-  if [[ -n "$value" ]]; then
-    label="$name  →  $value"
+  if [[ "$slot" == "led" ]]; then
+    value=$(jq -r '.led_mode // 0' <<<"$current_json")
+    label="$name  →  mode $value"
   else
-    label="$name"
+    value=$(jq -r --arg k "$slot" '.[$k] // ""' <<<"$current_json")
+    if [[ -n "$value" ]]; then
+      label="$name  →  $value"
+    else
+      label="$name"
+    fi
   fi
   labels+=("$label")
   LABEL_TO_NAME["$label"]="$name"
@@ -45,6 +56,27 @@ selection=$(omarchy-menu-select "Remap which macropad control?" "${labels[@]}" -
 name="${LABEL_TO_NAME[$selection]:-}"
 [[ -n "$name" ]] || exit 0
 slot="${SLOTS[$name]}"
+
+if [[ "$slot" == "led" ]]; then
+  mode=$(jq -r '.led_mode // 0' <<<"$current_json")
+  while true; do
+    choice=$(omarchy-menu-select "LED backlight — mode $mode" "Next ▶" "◀ Previous" "Done" -- --width "$MENU_WIDTH") || break
+    case "$choice" in
+      "Next ▶")
+        mode=$(( (mode + 1) % LED_MODE_COUNT ))
+        python3 "$APPLY" led "$mode" >/dev/null || true
+        ;;
+      "◀ Previous")
+        mode=$(( (mode - 1 + LED_MODE_COUNT) % LED_MODE_COUNT ))
+        python3 "$APPLY" led "$mode" >/dev/null || true
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  exit 0
+fi
 
 capture_json=$(python3 "$APPLY" capture "$slot") || exit 0
 status=$(jq -r '.status' <<<"$capture_json")

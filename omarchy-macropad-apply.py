@@ -5,7 +5,9 @@ ch57x-family macropad's config via ch57x-keyboard-tool.
 Subcommands (invoked by the Omarchy plugin and the legacy CLI trigger):
   capture <slot>          Wait for a real keypress, print {"status": ..., "token": ...}
   apply <slot> <token>    Write token into mapping.yaml and upload to the device
-  current                 Print the currently-mapped token for every slot as JSON
+  led <mode>              Send LED backlight mode <mode> (integer) to the device
+  current                 Print the currently-mapped token for every slot as JSON,
+                           plus the last LED mode set via this tool ("led_mode")
   <slot>                  Legacy one-shot mode: capture then apply immediately,
                            no confirmation step (kept for old callers only).
 
@@ -38,7 +40,18 @@ LABELS = {
     "knob_ccw": "Knob ↺ turn left (CCW)",
     "knob_press": "Knob press",
     "knob_cw": "Knob ↻ turn right (CW)",
+    "led": "LED backlight",
 }
+
+# ch57x-keyboard-tool's `led <mode>` takes a raw integer with no validation —
+# it just forwards the byte to the device, and unrecognized values are
+# silently accepted (not rejected) by this board's firmware. There's no
+# documented mode list or read-back for the 0x8890 variant, so this is an
+# empirically-picked wraparound range for the "Next/Previous" cycle UI, not a
+# confirmed mode count — cycling past the real number of distinct effects
+# just repeats some of them, which is harmless.
+LED_MODE_COUNT = 16
+LED_STATE_PATH = os.path.expanduser("~/.config/ch57x-keyboard/led_mode")
 
 DEFAULT_CONFIG = {
     "orientation": "normal",
@@ -191,6 +204,20 @@ def apply_slot(cfg, slot, token):
         knob[field] = token
 
 
+def load_led_mode():
+    try:
+        with open(LED_STATE_PATH) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return 0
+
+
+def save_led_mode(mode):
+    os.makedirs(os.path.dirname(LED_STATE_PATH), exist_ok=True)
+    with open(LED_STATE_PATH, "w") as f:
+        f.write(str(mode))
+
+
 def ch57x_base_command():
     cmd = ["ch57x-keyboard-tool"]
     cmd += ["--vendor-id", str(MACROPAD_VENDOR)]
@@ -242,6 +269,24 @@ def cmd_apply(slot, token):
     return 0
 
 
+def cmd_led(mode_str):
+    try:
+        mode = int(mode_str)
+    except ValueError:
+        print(json.dumps({"status": "error", "message": f"not a number: {mode_str}"}))
+        return 1
+    base = ch57x_base_command()
+    result = subprocess.run(base + ["led", str(mode)], capture_output=True, text=True)
+    if result.returncode != 0:
+        err = result.stderr.strip() or result.stdout.strip()
+        notify(f"LED mode {mode} failed: {err}", urgency="critical")
+        print(json.dumps({"status": "error", "message": err}))
+        return 1
+    save_led_mode(mode)
+    print(json.dumps({"status": "ok", "mode": mode}))
+    return 0
+
+
 def cmd_current():
     cfg = load_config()
     layer = cfg["layers"][0]
@@ -254,6 +299,7 @@ def cmd_current():
         "knob_ccw": knobs.get("ccw", ""),
         "knob_press": knobs.get("press", ""),
         "knob_cw": knobs.get("cw", ""),
+        "led_mode": load_led_mode(),
     }
     print(json.dumps(out))
     return 0
@@ -262,13 +308,15 @@ def cmd_current():
 def main():
     args = sys.argv[1:]
     if not args:
-        print("usage: omarchy-macropad-apply.py capture|apply|current|<slot>", file=sys.stderr)
+        print("usage: omarchy-macropad-apply.py capture|apply|led|current|<slot>", file=sys.stderr)
         return 1
 
     if args[0] == "capture" and len(args) == 2:
         return cmd_capture(args[1])
     if args[0] == "apply" and len(args) == 3:
         return cmd_apply(args[1], args[2])
+    if args[0] == "led" and len(args) == 2:
+        return cmd_led(args[1])
     if args[0] == "current" and len(args) == 1:
         return cmd_current()
     if len(args) == 1 and args[0] in LABELS:
@@ -283,7 +331,7 @@ def main():
             return 0
         return cmd_apply(slot, combo_to_token(captured))
 
-    print("usage: omarchy-macropad-apply.py capture|apply|current|<slot>", file=sys.stderr)
+    print("usage: omarchy-macropad-apply.py capture|apply|led|current|<slot>", file=sys.stderr)
     return 1
 
 
