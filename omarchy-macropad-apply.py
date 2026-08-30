@@ -283,6 +283,7 @@ def cmd_led(mode_str):
         print(json.dumps({"status": "error", "message": err}))
         return 1
     save_led_mode(mode)
+    notify(f"LED backlight → mode {mode} ✅")
     print(json.dumps({"status": "ok", "mode": mode}))
     return 0
 

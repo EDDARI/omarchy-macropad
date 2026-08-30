@@ -58,24 +58,22 @@ name="${LABEL_TO_NAME[$selection]:-}"
 slot="${SLOTS[$name]}"
 
 if [[ "$slot" == "led" ]]; then
-  mode=$(jq -r '.led_mode // 0' <<<"$current_json")
-  while true; do
-    choice=$(omarchy-menu-select "LED backlight — mode $mode" "Next ▶" "◀ Previous" "Done" -- --width "$MENU_WIDTH") || break
-    case "$choice" in
-      "Next ▶")
-        mode=$(( (mode + 1) % LED_MODE_COUNT ))
-        python3 "$APPLY" led "$mode" >/dev/null || true
-        ;;
-      "◀ Previous")
-        mode=$(( (mode - 1 + LED_MODE_COUNT) % LED_MODE_COUNT ))
-        python3 "$APPLY" led "$mode" >/dev/null || true
-        ;;
-      *)
-        break
-        ;;
-    esac
+  current_mode=$(jq -r '.led_mode // 0' <<<"$current_json")
+  led_labels=()
+  for ((i = 0; i < LED_MODE_COUNT; i++)); do
+    if [[ "$i" -eq "$current_mode" ]]; then
+      led_labels+=("Mode $i (current)")
+    else
+      led_labels+=("Mode $i")
+    fi
   done
-  exit 0
+
+  led_choice=$(omarchy-menu-select "LED backlight — pick a mode" "${led_labels[@]}" -- --width "$MENU_WIDTH") || exit 0
+  [[ -z "$led_choice" ]] && exit 0
+  new_mode=$(sed -E 's/^Mode ([0-9]+).*/\1/' <<<"$led_choice")
+  [[ "$new_mode" =~ ^[0-9]+$ ]] || exit 0
+
+  exec python3 "$APPLY" led "$new_mode"
 fi
 
 capture_json=$(python3 "$APPLY" capture "$slot") || exit 0

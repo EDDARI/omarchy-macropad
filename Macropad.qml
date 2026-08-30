@@ -21,16 +21,17 @@ Item {
   property int selectedIndex: 0
 
   // "list" -> "capturing" -> "confirm" | "message" -> back to "list"
-  // "list" -> "led" (live-cycles the backlight, applies as you go) -> "list"
+  // "list" -> "led" (pick a mode from a list, applies on Enter) -> "list"
   property string pickerState: "list"
   property string capturedToken: ""
   property string messageText: ""
   property var currentValues: ({})
-  property int ledMode: 0
+  property int ledCursor: 0
+  property bool ledApplying: false
 
-  // Empirically-picked wraparound range for the Next/Previous cycle — see
-  // LED_MODE_COUNT's comment in omarchy-macropad-apply.py for why this isn't
-  // a confirmed mode count.
+  // Empirically-picked upper bound for the mode list — see LED_MODE_COUNT's
+  // comment in omarchy-macropad-apply.py for why this isn't a confirmed
+  // mode count.
   readonly property int ledModeCount: 16
 
   readonly property string pluginDir: String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "")
@@ -68,7 +69,13 @@ Item {
   property int cardWidth: Math.min(Style.space(480), panel.width - Style.gapsOut * 2)
   property int listCardHeight: Math.min(rowHeight * slots.length + contentMargin * 2, panel.height - Style.gapsOut * 2)
   property int messageCardHeight: Math.min(Style.space(160), panel.height - Style.gapsOut * 2)
-  property int cardHeight: pickerState === "list" ? listCardHeight : messageCardHeight
+  // Shows up to 8 modes at a time; scrolls (mouse wheel or ↑/↓) for the rest.
+  property int ledCardHeight: Math.min(rowHeight * Math.min(ledModeCount, 8) + contentMargin * 2, panel.height - Style.gapsOut * 2)
+  property int cardHeight: {
+    if (pickerState === "list") return listCardHeight
+    if (pickerState === "led") return ledCardHeight
+    return messageCardHeight
+  }
 
   function refreshCurrentValues() {
     currentProc.running = false
@@ -112,7 +119,7 @@ Item {
     if (index < 0 || index >= root.slots.length) return
     root.selectedIndex = index
     if (root.slots[index].slot === "led") {
-      root.ledMode = root.currentValues.led_mode || 0
+      root.ledCursor = root.currentValues.led_mode || 0
       root.pickerState = "led"
       return
     }
@@ -122,9 +129,18 @@ Item {
     captureProc.running = true
   }
 
-  function stepLed(delta) {
-    root.ledMode = (root.ledMode + delta + root.ledModeCount) % root.ledModeCount
-    Quickshell.execDetached(["python3", root.applyScript, "led", String(root.ledMode)])
+  function ledRowLabel(index) {
+    var label = "Mode " + index
+    if (index === (root.currentValues.led_mode || 0)) label += "  (current)"
+    return label
+  }
+
+  function applyLedMode(mode) {
+    if (root.ledApplying) return
+    root.ledApplying = true
+    ledApplyProc.running = false
+    ledApplyProc.command = ["python3", root.applyScript, "led", String(mode)]
+    ledApplyProc.running = true
   }
 
   function handleCaptureResult(rawText) {
@@ -160,6 +176,16 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         try { root.currentValues = JSON.parse(text || "{}") } catch (e) { root.currentValues = ({}) }
+      }
+    }
+  }
+
+  Process {
+    id: ledApplyProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.ledApplying = false
+        root.backToList()
       }
     }
   }
@@ -231,14 +257,17 @@ Item {
               event.accepted = true
             }
           } else if (root.pickerState === "led") {
-            if (event.key === Qt.Key_Down || event.key === Qt.Key_Right) {
-              root.stepLed(1)
-              event.accepted = true
-            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Left) {
-              root.stepLed(-1)
-              event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Escape) {
+            if (event.key === Qt.Key_Escape) {
               root.backToList()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up) {
+              root.ledCursor = (root.ledCursor - 1 + root.ledModeCount) % root.ledModeCount
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down) {
+              root.ledCursor = (root.ledCursor + 1) % root.ledModeCount
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              root.applyLedMode(root.ledCursor)
               event.accepted = true
             }
           }
@@ -292,12 +321,58 @@ Item {
         }
       }
 
+      // --- LED mode list state ---
+      ListView {
+        id: ledListView
+        anchors.fill: parent
+        anchors.topMargin: card.contentTopInset
+        anchors.rightMargin: card.contentRightInset
+        anchors.bottomMargin: card.contentBottomInset
+        anchors.leftMargin: card.contentLeftInset
+        visible: root.pickerState === "led"
+        clip: true
+        model: root.ledModeCount
+        currentIndex: root.ledCursor
+        highlightFollowsCurrentItem: true
+
+        delegate: Rectangle {
+          id: ledDelegate
+          required property int index
+          readonly property bool hasCursor: index === root.ledCursor
+
+          width: ListView.view.width
+          height: root.rowHeight
+          radius: root.cornerRadius
+          color: hasCursor ? root.selectedBackground : "transparent"
+
+          Text {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.spacing.md
+            text: root.ledRowLabel(ledDelegate.index)
+            color: ledDelegate.hasCursor ? root.selectedText : root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            elide: Text.ElideRight
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onContainsMouseChanged: if (containsMouse) root.ledCursor = ledDelegate.index
+            onClicked: root.applyLedMode(ledDelegate.index)
+          }
+        }
+      }
+
       // --- Capturing / confirm / message states ---
       Column {
         anchors.centerIn: parent
         width: parent.width
         spacing: Style.spacing.md
-        visible: root.pickerState !== "list"
+        visible: root.pickerState === "capturing" || root.pickerState === "confirm" || root.pickerState === "message"
 
         Text {
           width: parent.width
@@ -311,8 +386,6 @@ Item {
               return "Press the shortcut for " + root.slots[root.selectedIndex].label + " now…"
             if (root.pickerState === "confirm")
               return root.slots[root.selectedIndex].label + "  →  " + root.capturedToken
-            if (root.pickerState === "led")
-              return "LED backlight — mode " + root.ledMode
             return root.messageText
           }
         }
@@ -327,7 +400,6 @@ Item {
           text: {
             if (root.pickerState === "capturing") return "Esc alone to cancel"
             if (root.pickerState === "confirm") return "Enter to confirm · Esc to cancel"
-            if (root.pickerState === "led") return "↑/↓ to cycle, applied live · Enter or Esc when done"
             return "Enter or Esc to go back"
           }
         }
